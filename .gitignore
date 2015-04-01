@@ -1,7 +1,7 @@
 $ cat .gitignore
-bin/
+/bin/*
 .settings
-gen/
+/gen/*
 .classpath
 .project
 proguard-project.txt
