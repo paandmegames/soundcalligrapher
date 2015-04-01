@@ -21,10 +21,14 @@ import com.github.mikephil.charting.utils.ColorTemplate;
 import com.github.mikephil.charting.utils.Highlight;
 
 import android.app.Activity;
+import android.graphics.Bitmap;
+import android.graphics.Bitmap.CompressFormat;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.media.AudioFormat;
+import android.media.AudioManager;
 import android.media.AudioRecord;
+import android.media.AudioTrack;
 import android.media.MediaRecorder;
 import android.os.AsyncTask;
 import android.os.Bundle;
@@ -43,13 +47,13 @@ import android.widget.TextView;
  */
 
 
-public class MainActivity extends Activity implements
-OnChartValueSelectedListener {	
+public class MainActivity extends Activity {	
 
 	 
 	private static final String APP_DIR_NAME = "SCalligrapher";
 	private static final String AUDIOFILE_EXT = ".pcm";
-	private static final int RECORDER_SAMPLERATE = 44100;
+	private static final String CHARTFILE_EXT = ".png";
+	private static final int RECORDER_SAMPLERATE = 8000;
 	private static final int RECORDER_CHANNELS = AudioFormat.CHANNEL_IN_MONO;
 	private static final int RECORDER_AUDIO_ENCODING = AudioFormat.ENCODING_PCM_16BIT;
 	private static final int RECORDER_SOURCE = MediaRecorder.AudioSource.MIC;
@@ -59,9 +63,14 @@ OnChartValueSelectedListener {
 	
 	private File app_dir;
 	private AudioRecord recorder;
-	private int bufferSize;
+	private int rBufferSize;
 	private LineChart chart;
-	private String file = "";
+	private LineData chartData;
+	private String audiofile = "";
+	private String chartfile = "";
+	private String recordname = "";
+	private Bitmap bitmap;
+
 	
 	
 	/*
@@ -73,18 +82,51 @@ OnChartValueSelectedListener {
     protected void onCreate(Bundle savedInstanceState) {
     	
     	
-    	// LOAD OPENCV
+    	// load OpenCV
     	System.loadLibrary("opencv_java");
     	
     	
-    	// CREATE MAIN VIEW
+    	// create main view
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        setupChart();
+    
+        
+        // check if sdcard is writable
+        if(!Environment.MEDIA_MOUNTED.equals(Environment.getExternalStorageState())) {
+        	((TextView)findViewById(R.id.result_text)).setText("Impossible to write audio, may be sdcard is not mounted");
+        	return;
+        }
         
         
-        // CREATE CHART
+        // create app directory
+        app_dir = new File(Environment.getExternalStorageDirectory(), APP_DIR_NAME);
+
+   	   	if(!app_dir.exists()){
+   	   		app_dir.mkdirs();
+   	   	}
+   	   	
+   	   	
+   	   	// create recorder
+   	   	rBufferSize = AudioRecord.getMinBufferSize(RECORDER_SAMPLERATE, RECORDER_CHANNELS,
+   	   			RECORDER_AUDIO_ENCODING)*BUFFER_RATIO;
+   	   	recorder = new AudioRecord(RECORDER_SOURCE, RECORDER_SAMPLERATE, RECORDER_CHANNELS,
+   	   		RECORDER_AUDIO_ENCODING, rBufferSize);
+   	   	
+   	   	
+   	   	// set thread priority
+   	   	Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
+   	   	
+    }
+      
+    
+	/*
+	 *  Chart global settings
+	 */
+    private void setupChart() {
+    	
         chart = (LineChart) findViewById(R.id.chart_amplitude);
-        chart.setOnChartValueSelectedListener(this);
+        chart.setDrawingCacheEnabled(true);
 
         // no description text
         chart.setDescription("");
@@ -105,13 +147,13 @@ OnChartValueSelectedListener {
         chart.setPinchZoom(true);
         
         // set an alternative background color
-        chart.setBackgroundColor(Color.LTGRAY);
+        chart.setBackgroundColor(Color.BLACK);
         
-        LineData data = new LineData();
-        data.setValueTextColor(Color.WHITE);
+        chartData = new LineData();
+        chartData.setValueTextColor(Color.WHITE);
         
         // add empty data
-        chart.setData(data);
+        chart.setData(chartData);
         
         Typeface tf = Typeface.createFromAsset(getAssets(), "OpenSans-Regular.ttf");
         
@@ -133,55 +175,40 @@ OnChartValueSelectedListener {
         YAxis leftAxis = chart.getAxisLeft();
         leftAxis.setTypeface(tf);
         leftAxis.setTextColor(Color.WHITE);
-        leftAxis.setAxisMaxValue(120f);
+        leftAxis.setAxisMaxValue(150f);
+        leftAxis.setAxisMinValue(-150f);
+        leftAxis.setStartAtZero(false);
         leftAxis.setDrawGridLines(true);
 
         YAxis rightAxis = chart.getAxisRight();
         rightAxis.setEnabled(false);
-        
-        
-        // CHECK SDCARD
-        if(!isExternalStorageWritable()) {
-        	((TextView)findViewById(R.id.result_text)).setText("Impossible to write audio, may be sdcard is not mounted");
-        	return;
-        }
-        
-        
-        // CREATE APP DIRECTORY
-        app_dir = new File(Environment.getExternalStorageDirectory(), APP_DIR_NAME);
-
-   	   	if(!app_dir.exists()){
-   	   		app_dir.mkdirs();
-   	   	}
-   	   	
-   	   	
-   	   	// CREATE RECORDER
-   	   	bufferSize = AudioRecord.getMinBufferSize(RECORDER_SAMPLERATE, RECORDER_CHANNELS,
-   	   			RECORDER_AUDIO_ENCODING)*BUFFER_RATIO;
-   	   	recorder = new AudioRecord(RECORDER_SOURCE, RECORDER_SAMPLERATE, RECORDER_CHANNELS,
-   	   		RECORDER_AUDIO_ENCODING, bufferSize);
-   	   	
-   	   	
-   	   	// SET THREAD PRIORITY
-   	   	Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO);
-   	   	
-    }
-    
-    
-    
-    
-	
-    // CHECK SDCARD
-	public boolean isExternalStorageWritable() {
-	    String state = Environment.getExternalStorageState();
-		if (Environment.MEDIA_MOUNTED.equals(state)) {
-			return true;
-		}
-		return false;
+		
 	}
+    
+    
+    /*
+     *  Chart dataset settings
+     */
+    private LineDataSet createSet(String name) {
+        LineDataSet set = new LineDataSet(null, name);
+        set.setAxisDependency(AxisDependency.LEFT);
+        set.setColor(ColorTemplate.getHoloBlue());
+        set.setCircleColor(ColorTemplate.getHoloBlue());
+        set.setLineWidth(2f);
+        set.setCircleSize(4f);
+        set.setFillAlpha(65);
+        set.setFillColor(ColorTemplate.getHoloBlue());
+        set.setHighLightColor(Color.rgb(244, 117, 117));
+        set.setValueTextColor(Color.WHITE);
+        set.setValueTextSize(10f);
+        return set;
+    }
+
 
     
-    //ON CLICK RECORD BUTTON
+    /*
+     *  On click record button
+     */
     public void record(View view) {
     	
     	// check recorder state
@@ -192,17 +219,20 @@ OnChartValueSelectedListener {
     		((Button)findViewById(R.id.record_button)).setText(R.string.stop);
     		
  
-    		//Save audiofile in async task
+    		/*
+    		 * Save audiofile in async task
+    		 */
     		new AsyncTask<Void, Void, Exception>() {
     	
     			@Override
     			protected Exception doInBackground(Void... params) {
 	
-    				file = app_dir + "/" + System.currentTimeMillis() + AUDIOFILE_EXT;
-    				byte data[] = new byte[bufferSize];		
+    				recordname = app_dir + "/" + System.currentTimeMillis();
+    				audiofile = recordname + AUDIOFILE_EXT;
+    				byte data[] = new byte[rBufferSize];		
     				FileOutputStream fos = null;
 
-    				try { fos = new FileOutputStream(file); } 
+    				try { fos = new FileOutputStream(audiofile); } 
     				catch (Exception e) { return e; }
     				
     				int read = 0;
@@ -234,7 +264,7 @@ OnChartValueSelectedListener {
     	        		
     	        	} else {  //Success
     	        		
-    	        		((TextView)findViewById(R.id.result_text)).setText(file + " is written.");
+    	        		((TextView)findViewById(R.id.result_text)).setText(audiofile + " is written.");
     	        		((Button)findViewById(R.id.record_button)).setText(R.string.record_button);
 
     	        	}
@@ -243,49 +273,48 @@ OnChartValueSelectedListener {
         		
         	}.execute();
   
+       
         	
-        	//Draw chart in async task
+        	/*
+        	 * Draw chart in async task
+        	 */
     		new AsyncTask<Void, Void, Exception>() {
  
     			@Override
     			protected Exception doInBackground(Void... params) {
 	
+    				chartfile = recordname + CHARTFILE_EXT;
     		    	int read = 0;
     		    	FileInputStream fis = null;
     		    	byte[] fileData = new byte[1024]; 
     				try {
-    					fis = new FileInputStream(file);
-    				} catch (FileNotFoundException e1) {
-    				
+    					fis = new FileInputStream(audiofile);
+    				} catch (FileNotFoundException e) {
+    					return e;
     				}
 
-    		        LineData data = chart.getData();
 
-    		        if (data != null) {
+    		        if (chartData != null) {
 
-    		            LineDataSet set = data.getDataSetByIndex(0);
+    		            LineDataSet set = chartData.getDataSetByIndex(0);
     		            // set.addEntry(...); // can be called as well
 
     		            if (set == null) {
-    		                set = createSet();
-    		                data.addDataSet(set);
+    		                set = createSet("Amplitude");
+    		                chartData.addDataSet(set);
     		            }
-
-    		            // add a new x-value first
-    		           // data.addXValue(mMonths[data.getXValCount() % 12] + " "
-    		             //       + (year + data.getXValCount() / 12));
-    		            //data.addEntry(new Entry((float) (Math.random() * 40) + 40f, set.getEntryCount()), 0);
-    		    		try {
+    		            try {  		    			
     		    			while((read = fis.read(fileData)) != -1){
     		    				for(int i=0;i<read;i++) {
-    		    					data.addXValue(String.valueOf(""));
-    		    					data.addEntry(new Entry((float)fileData[i], set.getEntryCount()), 0);
+    		    					chartData.addXValue("");
+    		    					chartData.addEntry(new Entry((float)fileData[i], set.getEntryCount()), 0);
     		    				}
     		    			}
+    		    			fis.close();
     		    		} catch (IOException e) {
-    		    			//Instances.getInstance().resetPlayback();
+    		    			return e;
     		    		}
-    				
+
     				
     		        }
     		        return null;
@@ -303,12 +332,18 @@ OnChartValueSelectedListener {
     	                chart.notifyDataSetChanged();
 
     	                // limit the number of visible entries
-    	               // chart.setVisibleXRange(6);
+    	                chart.setVisibleXRange(250);
     	                // mChart.setVisibleYRange(30, AxisDependency.LEFT);
 
     	                // move to the latest entry
-    	                //chart.moveViewToX(data.getXValCount() - 7);
-
+    	                chart.moveViewToX(chartData.getXValCount() - 7);
+    	                bitmap = Bitmap.createBitmap(chart.getDrawingCache());
+    	                
+    	                try {
+							bitmap.compress(CompressFormat.PNG, 100, new FileOutputStream(chartfile));
+						} catch (FileNotFoundException e) {
+							
+						}
     	                // this automatically refreshes the chart (calls invalidate())
     	                // mChart.moveViewTo(data.getXValCount()-7, 55f,
     	                // AxisDependency.LEFT);
@@ -326,39 +361,59 @@ OnChartValueSelectedListener {
     }
     
     
+    /*
+     *  On click play button
+     */
+    public void play(View view) {
+    	
+    	new AsyncTask<Void, Void, Exception>() {
 
+			@Override
+			protected Exception doInBackground(Void... params) {
+				int read = 0;
+				byte[] data = new byte[1024];
+				
+				FileInputStream fis = null;
+				
+				int bufferSize = AudioTrack.getMinBufferSize(RECORDER_SAMPLERATE,
+						AudioFormat.CHANNEL_OUT_MONO, RECORDER_AUDIO_ENCODING);
+				AudioTrack track = new AudioTrack(AudioManager.STREAM_MUSIC, RECORDER_SAMPLERATE,
+						AudioFormat.CHANNEL_OUT_MONO, RECORDER_AUDIO_ENCODING, bufferSize,
+						AudioTrack.MODE_STREAM);
+				track.play();
+				try {
+					fis = new FileInputStream(audiofile);
+				} catch (FileNotFoundException e) {
+					return e;
+				}
+	        
+				try {
+					while((read = fis.read(data)) != -1){
+						track.write(data, 0, read); 
+					}
+				} catch (IOException e) {
+					return e;
+				}
+				track.stop();
+				track.release();
+				return null;
+			}
+			
+	        @Override
+	        protected void onPostExecute(Exception result) {
+	        	
+	        	if (result != null) { //If any error occurs
+	        	
+	    		
+	        	} else {  //Success
+	   
+	        	}
+	        
+	        }
+    		
+    	}.execute();
     
-    
-    private LineDataSet createSet() {
-
-        LineDataSet set = new LineDataSet(null, "Dynamic Data");
-        set.setAxisDependency(AxisDependency.LEFT);
-        set.setColor(ColorTemplate.getHoloBlue());
-        set.setCircleColor(ColorTemplate.getHoloBlue());
-        set.setLineWidth(2f);
-        set.setCircleSize(4f);
-        set.setFillAlpha(65);
-        set.setFillColor(ColorTemplate.getHoloBlue());
-        set.setHighLightColor(Color.rgb(244, 117, 117));
-        set.setValueTextColor(Color.WHITE);
-        set.setValueTextSize(10f);
-        return set;
     }
-
-    
-	@Override
-	public void onValueSelected(Entry e, int dataSetIndex, Highlight h) {
-		// TODO Auto-generated method stub
-		
-	}
-
-
-	@Override
-	public void onNothingSelected() {
-		// TODO Auto-generated method stub
-		
-	}
-    
     
     
     @Override
@@ -374,7 +429,7 @@ OnChartValueSelectedListener {
         // Handle action bar item clicks here. The action bar will
         // automatically handle clicks on the Home/Up button, so long
         // as you specify a parent activity in AndroidManifest.xml.
-        int id = item.getItemId();
+        //int id = item.getItemId();
         /*if (id == R.id.action_settings) {
             return true;
         }*/

@@ -5,6 +5,16 @@
     
     
     <Button
+        android:id="@+id/play_button"
+        android:background="@drawable/buttons"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/play_button" 
+        android:onClick="play"
+        android:layout_alignParentTop="true"
+        android:layout_alignParentRight="true"/>
+
+    <Button
         android:id="@+id/record_button"
         android:background="@drawable/buttons"
         android:layout_width="wrap_content"
@@ -12,8 +22,8 @@
         android:text="@string/record_button" 
         android:onClick="record"
         android:layout_alignParentTop="true"
-        android:layout_alignParentRight="true"/>
-
+        android:layout_toLeftOf="@id/play_button"/>
+    
     <TextView
         android:id="@+id/result_text"
         android:layout_width="wrap_content"
